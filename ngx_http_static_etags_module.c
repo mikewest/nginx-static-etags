@@ -17,25 +17,33 @@ typedef struct {
     ngx_str_t   etag_format;
 } ngx_http_static_etags_loc_conf_t;
 
+static ngx_http_output_header_filter_pt  ngx_http_next_header_filter;
+/*static ngx_http_output_body_filter_pt    ngx_http_next_body_filter;*/
+
+static void * ngx_http_static_etags_create_loc_conf(ngx_conf_t *cf);
+static char * ngx_http_static_etags_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
+static ngx_int_t ngx_http_static_etags_init(ngx_conf_t *cf);
+static ngx_int_t ngx_http_static_etags_header_filter(ngx_http_request_t *r);
+
 static ngx_command_t  ngx_http_static_etags_commands[] = {
     { ngx_string( "enable_static_etags" ),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
       ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_static_etags_loc_conf_t, enable_static_etags)
+      offsetof( ngx_http_static_etags_loc_conf_t, enable_static_etags ),
       NULL },
 
     { ngx_string( "etag_format" ),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
       ngx_conf_set_str_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof(ngx_http_static_etags_loc_conf_t, etag_format),
+      offsetof( ngx_http_static_etags_loc_conf_t, etag_format ),
       NULL },
 
       ngx_null_command
 };
 
-static ngx_http_module_t  ngx_http_notice_module_ctx = {
+static ngx_http_module_t  ngx_http_static_etags_module_ctx = {
     NULL,                                   /* preconfiguration */
     ngx_http_static_etags_init,             /* postconfiguration */
 
@@ -48,45 +56,6 @@ static ngx_http_module_t  ngx_http_notice_module_ctx = {
     ngx_http_static_etags_create_loc_conf,  /* create location configuration */
     ngx_http_static_etags_merge_loc_conf,   /* merge location configuration */
 };
-
-static void * ngx_http_static_etags_create_loc_conf(ngx_conf_t *cf) {
-    ngx_http_static_etags_loc_conf_t  *conf;
-
-    conf = ngx_pcalloc( cf->pool, sizeof( ngx_http_static_etags_loc_conf_t ) );
-    if ( NULL == conf ) {
-        return NGX_CONF_ERROR;
-    }
-    conf->enable_static_etags   = NGX_CONF_UNSET;
-    conf->etag_format           = NGX_CONF_UNSET;
-    return conf;
-}
-
-static char *
-ngx_http_static_etags_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
-{
-    ngx_http_static_etags_loc_conf_t *prev = parent;
-    ngx_http_static_etags_loc_conf_t *conf = child;
-
-    ngx_conf_merge_uint_value( conf->enable_static_etags, prev->enable_static_etags, 0 );
-    ngx_conf_merge_str_value(  conf->etag_format, prev->etag_format, '' );
-
-    if ( conf->enable_static_etags !== 0 && conf->enable_static_etags !== 1 ) {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
-            "enable_static_etags must be 'on' or 'off'");
-        return NGX_CONF_ERROR;
-    }
-
-    return NGX_CONF_OK;
-}
-
-static ngx_int_t
-ngx_http_static_etags_init(ngx_conf_t *cf)
-{
-    ngx_http_next_header_filter = ngx_http_top_header_filter;
-    ngx_http_top_header_filter = ngx_http_static_etags_filter;
-
-    return NGX_OK;
-}
 
 ngx_module_t  ngx_http_static_etags_module = {
     NGX_MODULE_V1,
@@ -102,3 +71,55 @@ ngx_module_t  ngx_http_static_etags_module = {
     NULL,                               /* exit master */
     NGX_MODULE_V1_PADDING
 };
+
+
+static void * ngx_http_static_etags_create_loc_conf(ngx_conf_t *cf) {
+    ngx_http_static_etags_loc_conf_t    *conf;
+
+    conf = ngx_pcalloc( cf->pool, sizeof( ngx_http_static_etags_loc_conf_t ) );
+    if ( NULL == conf ) {
+        return NGX_CONF_ERROR;
+    }
+    conf->enable_static_etags   = NGX_CONF_UNSET_UINT;
+    return conf;
+}
+
+static char * ngx_http_static_etags_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child) {
+    ngx_http_static_etags_loc_conf_t *prev = parent;
+    ngx_http_static_etags_loc_conf_t *conf = child;
+
+    ngx_conf_merge_uint_value( conf->enable_static_etags, prev->enable_static_etags, 0 );
+    ngx_conf_merge_str_value(  conf->etag_format, prev->etag_format, "" );
+
+    if ( conf->enable_static_etags != 0 && conf->enable_static_etags != 1 ) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+            "enable_static_etags must be 'on' or 'off'");
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}
+
+static ngx_int_t ngx_http_static_etags_init(ngx_conf_t *cf) {
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = ngx_http_static_etags_header_filter;
+
+    return NGX_OK;
+}
+
+static ngx_int_t ngx_http_static_etags_header_filter(ngx_http_request_t *r) {
+    ngx_http_static_etags_loc_conf_t *loc_conf;
+    loc_conf = ngx_http_get_module_loc_conf(r, ngx_http_static_etags_module);
+    
+    r->headers_out.etag = ngx_list_push(&r->headers_out.headers);
+    if (r->headers_out.etag == NULL) {
+        return NGX_ERROR;
+    }
+    r->headers_out.etag->hash = 1;
+    r->headers_out.etag->key.len = sizeof("Etag") - 1;
+    r->headers_out.etag->key.data = (u_char *) "Etag";
+    r->headers_out.etag->value.len = sizeof("this-is-an-etag") - 1;
+    r->headers_out.etag->value.data = (u_char *) "this-is-an-etag";
+
+    return ngx_http_next_header_filter(r);
+}
