@@ -8,25 +8,36 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-#define ALLOWED_METHODS (NGX_HTTP_GET|NGX_HTTP_HEAD)
-
-static void *
-ngx_http_static_etags_create_loc_conf(ngx_conf_t *cf);
-
-static char *
-ngx_http_static_etags_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child);
-
-static char *
-ngx_http_static_etags_post_handler(ngx_conf_t *cf, void *data, void *conf);
-
+/*
+ *  Two configuration elements: `enable_etags` and `etag_format`, specified in
+ *  the `Location` block.
+ */
 typedef struct {
-    ngx_str_t path;
-    ngx_str_t type;
+    ngx_uint_t  enable_static_etags;
+    ngx_str_t   etag_format;
 } ngx_http_static_etags_loc_conf_t;
+
+static ngx_command_t  ngx_http_static_etags_commands[] = {
+    { ngx_string( "enable_static_etags" ),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
+      ngx_conf_set_flag_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_static_etags_loc_conf_t, enable_static_etags)
+      NULL },
+
+    { ngx_string( "etag_format" ),
+      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+      ngx_conf_set_str_slot,
+      NGX_HTTP_LOC_CONF_OFFSET,
+      offsetof(ngx_http_static_etags_loc_conf_t, etag_format),
+      NULL },
+
+      ngx_null_command
+};
 
 static ngx_http_module_t  ngx_http_notice_module_ctx = {
     NULL,                                   /* preconfiguration */
-    NULL,                                   /* postconfiguration */
+    ngx_http_static_etags_init,             /* postconfiguration */
 
     NULL,                                   /* create main configuration */
     NULL,                                   /* init main configuration */
@@ -38,8 +49,46 @@ static ngx_http_module_t  ngx_http_notice_module_ctx = {
     ngx_http_static_etags_merge_loc_conf,   /* merge location configuration */
 };
 
+static void * ngx_http_static_etags_create_loc_conf(ngx_conf_t *cf) {
+    ngx_http_static_etags_loc_conf_t  *conf;
 
-ngx_module_t  ngx_http_notice_module = {
+    conf = ngx_pcalloc( cf->pool, sizeof( ngx_http_static_etags_loc_conf_t ) );
+    if ( NULL == conf ) {
+        return NGX_CONF_ERROR;
+    }
+    conf->enable_static_etags   = NGX_CONF_UNSET;
+    conf->etag_format           = NGX_CONF_UNSET;
+    return conf;
+}
+
+static char *
+ngx_http_static_etags_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
+{
+    ngx_http_static_etags_loc_conf_t *prev = parent;
+    ngx_http_static_etags_loc_conf_t *conf = child;
+
+    ngx_conf_merge_uint_value( conf->enable_static_etags, prev->enable_static_etags, 0 );
+    ngx_conf_merge_str_value(  conf->etag_format, prev->etag_format, '' );
+
+    if ( conf->enable_static_etags !== 0 && conf->enable_static_etags !== 1 ) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+            "enable_static_etags must be 'on' or 'off'");
+        return NGX_CONF_ERROR;
+    }
+
+    return NGX_CONF_OK;
+}
+
+static ngx_int_t
+ngx_http_static_etags_init(ngx_conf_t *cf)
+{
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = ngx_http_static_etags_filter;
+
+    return NGX_OK;
+}
+
+ngx_module_t  ngx_http_static_etags_module = {
     NGX_MODULE_V1,
     &ngx_http_static_etags_module_ctx,  /* module context */
     ngx_http_static_etags_commands,     /* module directives */
@@ -53,15 +102,3 @@ ngx_module_t  ngx_http_notice_module = {
     NULL,                               /* exit master */
     NGX_MODULE_V1_PADDING
 };
-
-
-static void *
-ngx_http_static_etags_create_loc_conf(ngx_conf_t *cf)
-{
-    ngx_http_static_etags_conf_t  *conf;
-
-    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_static_etags_conf_t));
-    if (conf == NULL) return NGX_CONF_ERROR;
-
-    return conf;
-}
