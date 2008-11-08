@@ -7,7 +7,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-
+#include <sys/stat.h>
 /*
  *  Two configuration elements: `enable_etags` and `etag_format`, specified in
  *  the `Location` block.
@@ -108,17 +108,37 @@ static ngx_int_t ngx_http_static_etags_init(ngx_conf_t *cf) {
 }
 
 static ngx_int_t ngx_http_static_etags_header_filter(ngx_http_request_t *r) {
+    int                                 status;
+    ngx_log_t                          *log;
     u_char                             *p;
     size_t                              root;
     ngx_str_t                           path;
     ngx_http_static_etags_loc_conf_t   *loc_conf;
+    struct stat                         mystat;
+    
     loc_conf = ngx_http_get_module_loc_conf( r, ngx_http_static_etags_module );
     
     p = ngx_http_map_uri_to_path( r, &path, &root, 0 );
     if ( NULL == p ) {
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
+
+    log = r->connection->log;
     
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                    "http filename: \"%s\"", path.data);
+    
+
+    status = stat( (char *) path.data, &mystat );
+    
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                    "stat returned: \"%d\"", status);
+    
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                 "st_size: '%d'", mystat.st_size);
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                 "st_mtime: '%d'", mystat.st_mtime);
+                    
     r->headers_out.etag = ngx_list_push(&r->headers_out.headers);
     if (r->headers_out.etag == NULL) {
         return NGX_ERROR;
@@ -126,8 +146,8 @@ static ngx_int_t ngx_http_static_etags_header_filter(ngx_http_request_t *r) {
     r->headers_out.etag->hash = 1;
     r->headers_out.etag->key.len = sizeof("Etag") - 1;
     r->headers_out.etag->key.data = (u_char *) "Etag";
-    r->headers_out.etag->value.len = sizeof( &p ) - 1;
-    r->headers_out.etag->value.data = p;
+    r->headers_out.etag->value.len = path.len;
+    r->headers_out.etag->value.data = path.data;
 
     return ngx_http_next_header_filter(r);
 }
