@@ -8,6 +8,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <sys/stat.h>
+
 /*
  *  Two configuration elements: `enable_etags` and `etag_format`, specified in
  *  the `Location` block.
@@ -89,7 +90,7 @@ static char * ngx_http_static_etags_merge_loc_conf(ngx_conf_t *cf, void *parent,
     ngx_http_static_etags_loc_conf_t *conf = child;
 
     ngx_conf_merge_uint_value( conf->enable_static_etags, prev->enable_static_etags, 0 );
-    ngx_conf_merge_str_value(  conf->etag_format, prev->etag_format, "" );
+    ngx_conf_merge_str_value(  conf->etag_format, prev->etag_format, "%s_%X_%X" );
 
     if ( conf->enable_static_etags != 0 && conf->enable_static_etags != 1 ) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
@@ -114,40 +115,54 @@ static ngx_int_t ngx_http_static_etags_header_filter(ngx_http_request_t *r) {
     size_t                              root;
     ngx_str_t                           path;
     ngx_http_static_etags_loc_conf_t   *loc_conf;
-    struct stat                         mystat;
-    
-    loc_conf = ngx_http_get_module_loc_conf( r, ngx_http_static_etags_module );
-    
-    p = ngx_http_map_uri_to_path( r, &path, &root, 0 );
-    if ( NULL == p ) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
-    }
+    struct stat                         stat_result;
+    char                               *str_buffer;
+    int                                 str_len;
 
     log = r->connection->log;
     
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
-                    "http filename: \"%s\"", path.data);
+    loc_conf = ngx_http_get_module_loc_conf( r, ngx_http_static_etags_module );
     
+    // Is the module active?
+    if ( 1 == loc_conf->enable_static_etags ) {
+        p = ngx_http_map_uri_to_path( r, &path, &root, 0 );
+        if ( NULL == p ) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
 
-    status = stat( (char *) path.data, &mystat );
+
+        ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                        "http filename: \"%s\"", path.data);
     
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
-                    "stat returned: \"%d\"", status);
+        status = stat( (char *) path.data, &stat_result );
     
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
-                 "st_size: '%d'", mystat.st_size);
-    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
-                 "st_mtime: '%d'", mystat.st_mtime);
+        // Did the `stat` succeed?
+        if ( 0 == status) {
+            str_len    = 1000;
+            str_buffer = malloc( str_len + sizeof(char) );
+            sprintf( str_buffer, (char *) loc_conf->etag_format.data, r->uri.data, (unsigned int) stat_result.st_size, (unsigned int) stat_result.st_mtime );
+            
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                            "stat returned: \"%d\"", status);
+    
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                         "st_size: '%d'", stat_result.st_size);
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                         "st_mtime: '%d'", stat_result.st_mtime);
+            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, log, 0,
+                         "Concatted: '%s'", str_buffer );
                     
-    r->headers_out.etag = ngx_list_push(&r->headers_out.headers);
-    if (r->headers_out.etag == NULL) {
-        return NGX_ERROR;
+            r->headers_out.etag = ngx_list_push(&r->headers_out.headers);
+            if (r->headers_out.etag == NULL) {
+                return NGX_ERROR;
+            }
+            r->headers_out.etag->hash = 1;
+            r->headers_out.etag->key.len = sizeof("Etag") - 1;
+            r->headers_out.etag->key.data = (u_char *) "Etag";
+            r->headers_out.etag->value.len = strlen( str_buffer );
+            r->headers_out.etag->value.data = (u_char *) str_buffer;
+        }
     }
-    r->headers_out.etag->hash = 1;
-    r->headers_out.etag->key.len = sizeof("Etag") - 1;
-    r->headers_out.etag->key.data = (u_char *) "Etag";
-    r->headers_out.etag->value.len = path.len;
-    r->headers_out.etag->value.data = path.data;
 
     return ngx_http_next_header_filter(r);
 }
