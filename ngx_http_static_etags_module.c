@@ -14,7 +14,7 @@
  *  the `Location` block.
  */
 typedef struct {
-    ngx_uint_t  enable_static_etags;
+    ngx_uint_t  FileETag;
     ngx_str_t   etag_format;
 } ngx_http_static_etags_loc_conf_t;
 
@@ -27,11 +27,11 @@ static ngx_int_t ngx_http_static_etags_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_static_etags_header_filter(ngx_http_request_t *r);
 
 static ngx_command_t  ngx_http_static_etags_commands[] = {
-    { ngx_string( "enable_static_etags" ),
+    { ngx_string( "FileETag" ),
       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_FLAG,
       ngx_conf_set_flag_slot,
       NGX_HTTP_LOC_CONF_OFFSET,
-      offsetof( ngx_http_static_etags_loc_conf_t, enable_static_etags ),
+      offsetof( ngx_http_static_etags_loc_conf_t, FileETag ),
       NULL },
 
     { ngx_string( "etag_format" ),
@@ -81,7 +81,7 @@ static void * ngx_http_static_etags_create_loc_conf(ngx_conf_t *cf) {
     if ( NULL == conf ) {
         return NGX_CONF_ERROR;
     }
-    conf->enable_static_etags   = NGX_CONF_UNSET_UINT;
+    conf->FileETag   = NGX_CONF_UNSET_UINT;
     return conf;
 }
 
@@ -89,12 +89,12 @@ static char * ngx_http_static_etags_merge_loc_conf(ngx_conf_t *cf, void *parent,
     ngx_http_static_etags_loc_conf_t *prev = parent;
     ngx_http_static_etags_loc_conf_t *conf = child;
 
-    ngx_conf_merge_uint_value( conf->enable_static_etags, prev->enable_static_etags, 0 );
+    ngx_conf_merge_uint_value( conf->FileETag, prev->FileETag, 0 );
     ngx_conf_merge_str_value(  conf->etag_format, prev->etag_format, "%s_%X_%X" );
 
-    if ( conf->enable_static_etags != 0 && conf->enable_static_etags != 1 ) {
+    if ( conf->FileETag != 0 && conf->FileETag != 1 ) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
-            "enable_static_etags must be 'on' or 'off'");
+            "FileETag must be 'on' or 'off'");
         return NGX_CONF_ERROR;
     }
 
@@ -124,7 +124,7 @@ static ngx_int_t ngx_http_static_etags_header_filter(ngx_http_request_t *r) {
     loc_conf = ngx_http_get_module_loc_conf( r, ngx_http_static_etags_module );
     
     // Is the module active?
-    if ( 1 == loc_conf->enable_static_etags ) {
+    if ( 1 == loc_conf->FileETag ) {
         p = ngx_http_map_uri_to_path( r, &path, &root, 0 );
         if ( NULL == p ) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
